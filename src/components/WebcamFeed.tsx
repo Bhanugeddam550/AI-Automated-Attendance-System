@@ -2,28 +2,21 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import {
   loadModels,
   faceapi,
-  getRegisteredFaces,
+  getStudents,
   createFaceMatcher,
   markAttendance,
+  type DetectedStudent,
 } from '@/lib/faceRecognition';
 
-interface DetectedFace {
-  name: string;
-  confidence: number;
-  box: { x: number; y: number; width: number; height: number };
-}
-
 interface WebcamFeedProps {
-  onAttendanceMarked?: (name: string) => void;
-  isRegistering?: boolean;
-  onFaceCapture?: (descriptor: Float32Array) => void;
+  onAttendanceMarked?: (name: string, rollNumber: string) => void;
+  onFacesDetected?: (faces: DetectedStudent[]) => void;
 }
 
-export default function WebcamFeed({ onAttendanceMarked, isRegistering, onFaceCapture }: WebcamFeedProps) {
+export default function WebcamFeed({ onAttendanceMarked, onFacesDetected }: WebcamFeedProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [detectedFaces, setDetectedFaces] = useState<DetectedFace[]>([]);
   const intervalRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -71,30 +64,31 @@ export default function WebcamFeed({ onAttendanceMarked, isRegistering, onFaceCa
     const ctx = canvas.getContext('2d');
     if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (isRegistering && detections.length > 0 && onFaceCapture) {
-      onFaceCapture(detections[0].descriptor);
-    }
+    const students = getStudents();
+    const matcher = createFaceMatcher(students);
 
-    const faces = getRegisteredFaces();
-    const matcher = createFaceMatcher(faces);
-
-    const detected: DetectedFace[] = [];
+    const detected: DetectedStudent[] = [];
 
     for (const det of resized) {
       const box = det.detection.box;
       let name = 'Unknown';
+      let rollNumber = '';
       let confidence = 0;
 
       if (matcher) {
         const match = matcher.findBestMatch(det.descriptor);
         if (match.label !== 'unknown') {
-          name = match.label;
+          const parts = match.label.split('|');
+          name = parts[0];
+          rollNumber = parts[1] || '';
           confidence = Math.round((1 - match.distance) * 100);
-          markAttendance(name) && onAttendanceMarked?.(name);
+          if (markAttendance(name, rollNumber)) {
+            onAttendanceMarked?.(name, rollNumber);
+          }
         }
       }
 
-      detected.push({ name, confidence, box: { x: box.x, y: box.y, width: box.width, height: box.height } });
+      detected.push({ name, rollNumber, confidence, box: { x: box.x, y: box.y, width: box.width, height: box.height } });
 
       if (ctx) {
         const isKnown = name !== 'Unknown';
@@ -102,31 +96,40 @@ export default function WebcamFeed({ onAttendanceMarked, isRegistering, onFaceCa
         ctx.lineWidth = 2;
         ctx.strokeRect(box.x, box.y, box.width, box.height);
 
-        // Draw corners
         const cornerLen = 12;
         ctx.lineWidth = 3;
-        // Top-left
         ctx.beginPath(); ctx.moveTo(box.x, box.y + cornerLen); ctx.lineTo(box.x, box.y); ctx.lineTo(box.x + cornerLen, box.y); ctx.stroke();
-        // Top-right
         ctx.beginPath(); ctx.moveTo(box.x + box.width - cornerLen, box.y); ctx.lineTo(box.x + box.width, box.y); ctx.lineTo(box.x + box.width, box.y + cornerLen); ctx.stroke();
-        // Bottom-left
         ctx.beginPath(); ctx.moveTo(box.x, box.y + box.height - cornerLen); ctx.lineTo(box.x, box.y + box.height); ctx.lineTo(box.x + cornerLen, box.y + box.height); ctx.stroke();
-        // Bottom-right
         ctx.beginPath(); ctx.moveTo(box.x + box.width - cornerLen, box.y + box.height); ctx.lineTo(box.x + box.width, box.y + box.height); ctx.lineTo(box.x + box.width, box.y + box.height - cornerLen); ctx.stroke();
 
-        // Label
+        // Label background
         ctx.fillStyle = isKnown ? 'hsl(175, 80%, 50%)' : 'hsl(0, 72%, 55%)';
-        ctx.font = '14px JetBrains Mono';
-        const label = isKnown ? `${name} (${confidence}%)` : 'Unknown';
-        ctx.fillText(label, box.x, box.y - 8);
+        ctx.font = 'bold 13px JetBrains Mono';
+        const label = isKnown ? `${name} (${confidence}%)` : 'Unknown Person';
+        const labelWidth = ctx.measureText(label).width + 12;
+        ctx.globalAlpha = 0.85;
+        ctx.fillRect(box.x, box.y - 24, labelWidth, 22);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = isKnown ? 'hsl(220, 20%, 7%)' : 'hsl(0, 0%, 100%)';
+        ctx.fillText(label, box.x + 6, box.y - 8);
+
+        if (isKnown && rollNumber) {
+          ctx.fillStyle = 'hsl(175, 80%, 50%)';
+          ctx.globalAlpha = 0.7;
+          ctx.font = '11px JetBrains Mono';
+          ctx.fillText(`Roll: ${rollNumber}`, box.x + 6, box.y + box.height + 16);
+          ctx.globalAlpha = 1;
+        }
       }
     }
-    setDetectedFaces(detected);
-  }, [isRegistering, onFaceCapture, onAttendanceMarked]);
+
+    onFacesDetected?.(detected);
+  }, [onAttendanceMarked, onFacesDetected]);
 
   useEffect(() => {
     if (status !== 'ready') return;
-    intervalRef.current = window.setInterval(detect, 500);
+    intervalRef.current = window.setInterval(detect, 400);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [status, detect]);
 
@@ -140,7 +143,7 @@ export default function WebcamFeed({ onAttendanceMarked, isRegistering, onFaceCa
           </div>
         )}
         {status === 'error' && (
-          <div className="flex h-[480px] items-center justify-center bg-card">
+          <div className="flex h-[360px] items-center justify-center bg-card">
             <p className="font-mono text-sm text-destructive">CAMERA ACCESS DENIED</p>
           </div>
         )}
@@ -158,11 +161,9 @@ export default function WebcamFeed({ onAttendanceMarked, isRegistering, onFaceCa
           style={{ transform: 'scaleX(-1)' }}
         />
         <div className="scanline pointer-events-none absolute inset-0" />
-        {/* HUD overlay */}
         <div className="pointer-events-none absolute left-3 top-3 font-mono text-xs text-primary/70">
-          <p>SYS: FACE_DETECT v1.0</p>
-          <p>FACES: {detectedFaces.length}</p>
-          <p>{isRegistering ? 'MODE: REGISTER' : 'MODE: ATTENDANCE'}</p>
+          <p>SYS: FACE_DETECT v2.0</p>
+          <p>MODE: RECOGNITION</p>
         </div>
         <div className="pointer-events-none absolute bottom-3 right-3 font-mono text-xs text-primary/70">
           <p>{new Date().toLocaleDateString()}</p>

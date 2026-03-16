@@ -14,34 +14,52 @@ export async function loadModels(): Promise<void> {
   modelsLoaded = true;
 }
 
-export interface RegisteredFace {
+export interface Student {
   name: string;
-  descriptor: number[];
+  rollNumber: string;
+  descriptors: number[][]; // multiple descriptors per student
+  photoUrl?: string; // thumbnail for display
 }
-
-const STORAGE_KEY = 'face-attendance-faces';
-const ATTENDANCE_KEY = 'face-attendance-log';
 
 export interface AttendanceRecord {
   name: string;
+  rollNumber: string;
   time: string;
   date: string;
+  status: 'Present';
 }
 
-export function getRegisteredFaces(): RegisteredFace[] {
-  const data = localStorage.getItem(STORAGE_KEY);
+export interface DetectedStudent {
+  name: string;
+  rollNumber: string;
+  confidence: number;
+  box: { x: number; y: number; width: number; height: number };
+}
+
+const STUDENTS_KEY = 'face-attendance-students';
+const ATTENDANCE_KEY = 'face-attendance-log';
+
+export function getStudents(): Student[] {
+  const data = localStorage.getItem(STUDENTS_KEY);
   return data ? JSON.parse(data) : [];
 }
 
-export function saveRegisteredFace(face: RegisteredFace): void {
-  const faces = getRegisteredFaces();
-  faces.push(face);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(faces));
+export function saveStudent(student: Student): void {
+  const students = getStudents();
+  const existing = students.findIndex(s => s.rollNumber === student.rollNumber);
+  if (existing >= 0) {
+    // Merge descriptors
+    students[existing].descriptors.push(...student.descriptors);
+    if (student.photoUrl) students[existing].photoUrl = student.photoUrl;
+  } else {
+    students.push(student);
+  }
+  localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
 }
 
-export function removeRegisteredFace(name: string): void {
-  const faces = getRegisteredFaces().filter(f => f.name !== name);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(faces));
+export function removeStudent(rollNumber: string): void {
+  const students = getStudents().filter(s => s.rollNumber !== rollNumber);
+  localStorage.setItem(STUDENTS_KEY, JSON.stringify(students));
 }
 
 export function getAttendanceLog(): AttendanceRecord[] {
@@ -49,16 +67,18 @@ export function getAttendanceLog(): AttendanceRecord[] {
   return data ? JSON.parse(data) : [];
 }
 
-export function markAttendance(name: string): boolean {
+export function markAttendance(name: string, rollNumber: string): boolean {
   const log = getAttendanceLog();
   const today = new Date().toLocaleDateString();
-  const alreadyMarked = log.some(r => r.name === name && r.date === today);
+  const alreadyMarked = log.some(r => r.rollNumber === rollNumber && r.date === today);
   if (alreadyMarked) return false;
 
   log.push({
     name,
+    rollNumber,
     time: new Date().toLocaleTimeString(),
     date: today,
+    status: 'Present',
   });
   localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(log));
   return true;
@@ -68,27 +88,23 @@ export function clearAttendanceLog(): void {
   localStorage.removeItem(ATTENDANCE_KEY);
 }
 
-export function createFaceMatcher(faces: RegisteredFace[]): faceapi.FaceMatcher | null {
-  if (faces.length === 0) return null;
+export function createFaceMatcher(students: Student[]): faceapi.FaceMatcher | null {
+  if (students.length === 0) return null;
 
-  const labeledDescriptors = new Map<string, Float32Array[]>();
-  
-  for (const face of faces) {
-    const arr = labeledDescriptors.get(face.name) || [];
-    arr.push(new Float32Array(face.descriptor));
-    labeledDescriptors.set(face.name, arr);
-  }
+  const labeled = students
+    .filter(s => s.descriptors.length > 0)
+    .map(s => new faceapi.LabeledFaceDescriptors(
+      `${s.name}|${s.rollNumber}`,
+      s.descriptors.map(d => new Float32Array(d))
+    ));
 
-  const labeled = Array.from(labeledDescriptors.entries()).map(
-    ([name, descriptors]) => new faceapi.LabeledFaceDescriptors(name, descriptors)
-  );
-
-  return new faceapi.FaceMatcher(labeled, 0.55);
+  if (labeled.length === 0) return null;
+  return new faceapi.FaceMatcher(labeled, 0.5); // stricter threshold
 }
 
 export function exportAttendanceCSV(): void {
   const log = getAttendanceLog();
-  const csv = 'Name,Time,Date\n' + log.map(r => `${r.name},${r.time},${r.date}`).join('\n');
+  const csv = 'Name,Roll Number,Date,Time,Status\n' + log.map(r => `${r.name},${r.rollNumber},${r.date},${r.time},${r.status}`).join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -96,6 +112,13 @@ export function exportAttendanceCSV(): void {
   a.download = 'attendance.csv';
   a.click();
   URL.revokeObjectURL(url);
+}
+
+export async function extractDescriptorsFromImage(imageUrl: string): Promise<Float32Array[]> {
+  await loadModels();
+  const img = await faceapi.fetchImage(imageUrl);
+  const detections = await faceapi.detectAllFaces(img).withFaceLandmarks().withFaceDescriptors();
+  return detections.map(d => d.descriptor);
 }
 
 export { faceapi };
