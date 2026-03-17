@@ -26,7 +26,7 @@ export interface AttendanceRecord {
   rollNumber: string;
   time: string;
   date: string;
-  status: 'Present';
+  status: 'Present' | 'Absent';
 }
 
 export interface DetectedStudent {
