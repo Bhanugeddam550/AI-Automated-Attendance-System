@@ -46,7 +46,7 @@ export interface DetectedStudent {
 const ATTENDANCE_START_HOUR = 9;
 const ATTENDANCE_START_MIN = 30;
 const ATTENDANCE_END_HOUR = 9;
-const ATTENDANCE_END_MIN = 45;
+const ATTENDANCE_END_MIN = 50;
 
 export function isAttendanceOpen(): boolean {
   const now = new Date();
