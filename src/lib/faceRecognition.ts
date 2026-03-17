@@ -26,7 +26,7 @@ export interface AttendanceRecord {
   rollNumber: string;
   time: string;
   date: string;
-  status: 'Present';
+  status: 'Present' | 'Absent';
 }
 
 export interface DetectedStudent {
@@ -102,14 +102,49 @@ export function createFaceMatcher(students: Student[]): faceapi.FaceMatcher | nu
   return new faceapi.FaceMatcher(labeled, 0.5); // stricter threshold
 }
 
-export function exportAttendanceCSV(): void {
+export function generateFullAttendance(): AttendanceRecord[] {
+  const students = getStudents();
   const log = getAttendanceLog();
-  const csv = 'Name,Roll Number,Date,Time,Status\n' + log.map(r => `${r.name},${r.rollNumber},${r.date},${r.time},${r.status}`).join('\n');
+  const today = new Date().toLocaleDateString();
+  const todayISO = new Date().toISOString().split('T')[0];
+
+  // Sort students by roll number
+  const sorted = [...students].sort((a, b) => a.rollNumber.localeCompare(b.rollNumber, undefined, { numeric: true }));
+
+  return sorted.map(s => {
+    const present = log.find(r => r.rollNumber === s.rollNumber && r.date === today);
+    if (present) {
+      return { ...present, date: todayISO };
+    }
+    return {
+      name: s.name,
+      rollNumber: s.rollNumber,
+      time: '-',
+      date: todayISO,
+      status: 'Absent' as const,
+    };
+  });
+}
+
+export function exportAttendanceCSV(): void {
+  const records = generateFullAttendance();
+  if (records.length === 0) {
+    const log = getAttendanceLog();
+    if (log.length === 0) return;
+    const csv = 'Roll Number,Name,Status,Time,Date\n' + log.map(r => `${r.rollNumber},${r.name},${r.status},${r.time},${r.date}`).join('\n');
+    downloadCSV(csv);
+    return;
+  }
+  const csv = 'Roll Number,Name,Status,Time,Date\n' + records.map(r => `${r.rollNumber},${r.name},${r.status},${r.time},${r.date}`).join('\n');
+  downloadCSV(csv);
+}
+
+function downloadCSV(csv: string): void {
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'attendance.csv';
+  a.download = `attendance_${new Date().toISOString().split('T')[0]}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
