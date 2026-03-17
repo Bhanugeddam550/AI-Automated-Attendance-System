@@ -17,8 +17,14 @@ export async function loadModels(): Promise<void> {
 export interface Student {
   name: string;
   rollNumber: string;
-  descriptors: number[][]; // multiple descriptors per student
-  photoUrl?: string; // thumbnail for display
+  descriptors: number[][];
+  photoUrl?: string;
+}
+
+export interface MasterStudent {
+  rollNumber: string;
+  name: string;
+  category: 'Regular' | 'Lateral Entry';
 }
 
 export interface AttendanceRecord {
@@ -36,6 +42,62 @@ export interface DetectedStudent {
   box: { x: number; y: number; width: number; height: number };
 }
 
+// --- Time Window Config ---
+const ATTENDANCE_START_HOUR = 9;
+const ATTENDANCE_START_MIN = 30;
+const ATTENDANCE_END_HOUR = 9;
+const ATTENDANCE_END_MIN = 45;
+
+export function isAttendanceOpen(): boolean {
+  const now = new Date();
+  const h = now.getHours();
+  const m = now.getMinutes();
+  const currentMins = h * 60 + m;
+  const startMins = ATTENDANCE_START_HOUR * 60 + ATTENDANCE_START_MIN;
+  const endMins = ATTENDANCE_END_HOUR * 60 + ATTENDANCE_END_MIN;
+  return currentMins >= startMins && currentMins <= endMins;
+}
+
+export function isAfterAttendanceWindow(): boolean {
+  const now = new Date();
+  const h = now.getHours();
+  const m = now.getMinutes();
+  const currentMins = h * 60 + m;
+  const endMins = ATTENDANCE_END_HOUR * 60 + ATTENDANCE_END_MIN;
+  return currentMins > endMins;
+}
+
+export function getAttendanceWindowText(): string {
+  return `${String(ATTENDANCE_START_HOUR).padStart(2, '0')}:${String(ATTENDANCE_START_MIN).padStart(2, '0')} – ${String(ATTENDANCE_END_HOUR).padStart(2, '0')}:${String(ATTENDANCE_END_MIN).padStart(2, '0')}`;
+}
+
+// --- Predefined Master List ---
+export function getMasterStudentList(): MasterStudent[] {
+  const list: MasterStudent[] = [];
+
+  // Regular students: 233B1A4201 to 233B1A4259
+  for (let i = 1; i <= 59; i++) {
+    const roll = `233B1A42${String(i).padStart(2, '0')}`;
+    list.push({ rollNumber: roll, name: `Student_${i}`, category: 'Regular' });
+  }
+
+  // Lateral Entry: 243B1A4201 to 243B1A4206
+  for (let i = 1; i <= 6; i++) {
+    const roll = `243B1A42${String(i).padStart(2, '0')}`;
+    list.push({ rollNumber: roll, name: `LE_Student_${i}`, category: 'Lateral Entry' });
+  }
+
+  // Override names from registered students
+  const registered = getStudents();
+  for (const ms of list) {
+    const reg = registered.find(s => s.rollNumber === ms.rollNumber);
+    if (reg) ms.name = reg.name;
+  }
+
+  return list;
+}
+
+// --- Storage ---
 const STUDENTS_KEY = 'face-attendance-students';
 const ATTENDANCE_KEY = 'face-attendance-log';
 
@@ -48,9 +110,9 @@ export function saveStudent(student: Student): void {
   const students = getStudents();
   const existing = students.findIndex(s => s.rollNumber === student.rollNumber);
   if (existing >= 0) {
-    // Merge descriptors
     students[existing].descriptors.push(...student.descriptors);
     if (student.photoUrl) students[existing].photoUrl = student.photoUrl;
+    if (student.name) students[existing].name = student.name;
   } else {
     students.push(student);
   }
@@ -68,6 +130,9 @@ export function getAttendanceLog(): AttendanceRecord[] {
 }
 
 export function markAttendance(name: string, rollNumber: string): boolean {
+  // Only allow marking during the attendance window
+  if (!isAttendanceOpen()) return false;
+
   const log = getAttendanceLog();
   const today = new Date().toLocaleDateString();
   const alreadyMarked = log.some(r => r.rollNumber === rollNumber && r.date === today);
@@ -99,26 +164,23 @@ export function createFaceMatcher(students: Student[]): faceapi.FaceMatcher | nu
     ));
 
   if (labeled.length === 0) return null;
-  return new faceapi.FaceMatcher(labeled, 0.5); // stricter threshold
+  return new faceapi.FaceMatcher(labeled, 0.5);
 }
 
 export function generateFullAttendance(): AttendanceRecord[] {
-  const students = getStudents();
+  const masterList = getMasterStudentList();
   const log = getAttendanceLog();
   const today = new Date().toLocaleDateString();
   const todayISO = new Date().toISOString().split('T')[0];
 
-  // Sort students by roll number
-  const sorted = [...students].sort((a, b) => a.rollNumber.localeCompare(b.rollNumber, undefined, { numeric: true }));
-
-  return sorted.map(s => {
-    const present = log.find(r => r.rollNumber === s.rollNumber && r.date === today);
+  return masterList.map(ms => {
+    const present = log.find(r => r.rollNumber === ms.rollNumber && r.date === today);
     if (present) {
-      return { ...present, date: todayISO };
+      return { ...present, date: todayISO, name: ms.name };
     }
     return {
-      name: s.name,
-      rollNumber: s.rollNumber,
+      name: ms.name,
+      rollNumber: ms.rollNumber,
       time: '-',
       date: todayISO,
       status: 'Absent' as const,
@@ -128,13 +190,7 @@ export function generateFullAttendance(): AttendanceRecord[] {
 
 export function exportAttendanceCSV(): void {
   const records = generateFullAttendance();
-  if (records.length === 0) {
-    const log = getAttendanceLog();
-    if (log.length === 0) return;
-    const csv = 'Roll Number,Name,Status,Time,Date\n' + log.map(r => `${r.rollNumber},${r.name},${r.status},${r.time},${r.date}`).join('\n');
-    downloadCSV(csv);
-    return;
-  }
+  if (records.length === 0) return;
   const csv = 'Roll Number,Name,Status,Time,Date\n' + records.map(r => `${r.rollNumber},${r.name},${r.status},${r.time},${r.date}`).join('\n');
   downloadCSV(csv);
 }
