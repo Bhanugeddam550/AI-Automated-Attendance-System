@@ -12,6 +12,7 @@ import type { DetectedStudent } from '@/lib/faceRecognition';
 type Tab = 'detect' | 'dataset' | 'dashboard';
 
 const Index = () => {
+  const { user, signOut } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('detect');
   const [refreshKey, setRefreshKey] = useState(0);
   const [detectedFaces, setDetectedFaces] = useState<DetectedStudent[]>([]);
