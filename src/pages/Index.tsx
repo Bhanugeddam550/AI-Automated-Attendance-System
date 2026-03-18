@@ -3,8 +3,10 @@ import WebcamFeed from '@/components/WebcamFeed';
 import DatasetManager from '@/components/DatasetManager';
 import AttendanceDashboard from '@/components/AttendanceDashboard';
 import StudentDetailsPanel from '@/components/StudentDetailsPanel';
-import { Scan, Database, LayoutDashboard } from 'lucide-react';
+import { Scan, Database, LayoutDashboard, LogOut } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
+import { Button } from '@/components/ui/button';
 import type { DetectedStudent } from '@/lib/faceRecognition';
 
 type Tab = 'detect' | 'dataset' | 'dashboard';
