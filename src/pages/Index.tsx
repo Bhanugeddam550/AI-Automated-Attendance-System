@@ -3,13 +3,16 @@ import WebcamFeed from '@/components/WebcamFeed';
 import DatasetManager from '@/components/DatasetManager';
 import AttendanceDashboard from '@/components/AttendanceDashboard';
 import StudentDetailsPanel from '@/components/StudentDetailsPanel';
-import { Scan, Database, LayoutDashboard } from 'lucide-react';
+import { Scan, Database, LayoutDashboard, LogOut } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
+import { Button } from '@/components/ui/button';
 import type { DetectedStudent } from '@/lib/faceRecognition';
 
 type Tab = 'detect' | 'dataset' | 'dashboard';
 
 const Index = () => {
+  const { user, signOut } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>('detect');
   const [refreshKey, setRefreshKey] = useState(0);
   const [detectedFaces, setDetectedFaces] = useState<DetectedStudent[]>([]);
@@ -47,21 +50,29 @@ const Index = () => {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-1 rounded-lg border border-border bg-secondary p-1">
-            {tabs.map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 rounded-md px-3 py-1.5 font-mono text-xs transition-all ${
-                  activeTab === tab.id
-                    ? 'bg-primary text-primary-foreground glow-primary'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {tab.icon}
-                <span className="hidden sm:inline">{tab.label}</span>
-              </button>
-            ))}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1 rounded-lg border border-border bg-secondary p-1">
+              {tabs.map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-2 rounded-md px-3 py-1.5 font-mono text-xs transition-all ${
+                    activeTab === tab.id
+                      ? 'bg-primary text-primary-foreground glow-primary'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {tab.icon}
+                  <span className="hidden sm:inline">{tab.label}</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 border-l border-border pl-3">
+              <span className="hidden md:inline font-mono text-[10px] text-muted-foreground truncate max-w-[120px]">{user?.email}</span>
+              <Button variant="ghost" size="icon" onClick={signOut} className="h-8 w-8 text-muted-foreground hover:text-destructive">
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </div>
       </header>
