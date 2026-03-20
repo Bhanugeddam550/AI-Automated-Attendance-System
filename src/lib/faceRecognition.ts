@@ -27,12 +27,14 @@ export interface MasterStudent {
   category: 'Regular' | 'Lateral Entry';
 }
 
+export type AttendanceStatus = 'Present' | 'Late' | 'Absent';
+
 export interface AttendanceRecord {
   name: string;
   rollNumber: string;
   time: string;
   date: string;
-  status: 'Present' | 'Absent';
+  status: AttendanceStatus;
 }
 
 export interface DetectedStudent {
@@ -43,57 +45,66 @@ export interface DetectedStudent {
 }
 
 // --- Time Window Config ---
-const ATTENDANCE_START_HOUR = 9;
-const ATTENDANCE_START_MIN = 30;
-const ATTENDANCE_END_HOUR = 9;
-const ATTENDANCE_END_MIN = 50;
+const PRESENT_START_HOUR = 9;
+const PRESENT_START_MIN = 30;
+const PRESENT_END_HOUR = 9;
+const PRESENT_END_MIN = 45;
+
+const LATE_START_HOUR = 9;
+const LATE_START_MIN = 46;
+const LATE_END_HOUR = 10;
+const LATE_END_MIN = 15;
+
+export function getTimeWindowStatus(): 'before' | 'present' | 'late' | 'closed' {
+  const now = new Date();
+  const mins = now.getHours() * 60 + now.getMinutes();
+  const presentStart = PRESENT_START_HOUR * 60 + PRESENT_START_MIN;
+  const presentEnd = PRESENT_END_HOUR * 60 + PRESENT_END_MIN;
+  const lateEnd = LATE_END_HOUR * 60 + LATE_END_MIN;
+
+  if (mins < presentStart) return 'before';
+  if (mins <= presentEnd) return 'present';
+  if (mins <= lateEnd) return 'late';
+  return 'closed';
+}
 
 export function isAttendanceOpen(): boolean {
-  const now = new Date();
-  const h = now.getHours();
-  const m = now.getMinutes();
-  const currentMins = h * 60 + m;
-  const startMins = ATTENDANCE_START_HOUR * 60 + ATTENDANCE_START_MIN;
-  const endMins = ATTENDANCE_END_HOUR * 60 + ATTENDANCE_END_MIN;
-  return currentMins >= startMins && currentMins <= endMins;
+  const status = getTimeWindowStatus();
+  return status === 'present' || status === 'late';
 }
 
 export function isAfterAttendanceWindow(): boolean {
-  const now = new Date();
-  const h = now.getHours();
-  const m = now.getMinutes();
-  const currentMins = h * 60 + m;
-  const endMins = ATTENDANCE_END_HOUR * 60 + ATTENDANCE_END_MIN;
-  return currentMins > endMins;
+  return getTimeWindowStatus() === 'closed';
 }
 
 export function getAttendanceWindowText(): string {
-  return `${String(ATTENDANCE_START_HOUR).padStart(2, '0')}:${String(ATTENDANCE_START_MIN).padStart(2, '0')} – ${String(ATTENDANCE_END_HOUR).padStart(2, '0')}:${String(ATTENDANCE_END_MIN).padStart(2, '0')}`;
+  return `${String(PRESENT_START_HOUR).padStart(2, '0')}:${String(PRESENT_START_MIN).padStart(2, '0')} – ${String(LATE_END_HOUR).padStart(2, '0')}:${String(LATE_END_MIN).padStart(2, '0')}`;
+}
+
+export function getPresenceWindowText(): string {
+  return `${String(PRESENT_START_HOUR).padStart(2, '0')}:${String(PRESENT_START_MIN).padStart(2, '0')} – ${String(PRESENT_END_HOUR).padStart(2, '0')}:${String(PRESENT_END_MIN).padStart(2, '0')}`;
+}
+
+export function getLateWindowText(): string {
+  return `${String(LATE_START_HOUR).padStart(2, '0')}:${String(LATE_START_MIN).padStart(2, '0')} – ${String(LATE_END_HOUR).padStart(2, '0')}:${String(LATE_END_MIN).padStart(2, '0')}`;
 }
 
 // --- Predefined Master List ---
 export function getMasterStudentList(): MasterStudent[] {
   const list: MasterStudent[] = [];
-
-  // Regular students: 233B1A4201 to 233B1A4259
   for (let i = 1; i <= 59; i++) {
     const roll = `233B1A42${String(i).padStart(2, '0')}`;
     list.push({ rollNumber: roll, name: `Student_${i}`, category: 'Regular' });
   }
-
-  // Lateral Entry: 243B1A4201 to 243B1A4206
   for (let i = 1; i <= 6; i++) {
     const roll = `243B1A42${String(i).padStart(2, '0')}`;
     list.push({ rollNumber: roll, name: `LE_Student_${i}`, category: 'Lateral Entry' });
   }
-
-  // Override names from registered students
   const registered = getStudents();
   for (const ms of list) {
     const reg = registered.find(s => s.rollNumber === ms.rollNumber);
     if (reg) ms.name = reg.name;
   }
-
   return list;
 }
 
@@ -130,7 +141,6 @@ export function getAttendanceLog(): AttendanceRecord[] {
 }
 
 export function markAttendance(name: string, rollNumber: string): boolean {
-  // Only allow marking during the attendance window
   if (!isAttendanceOpen()) return false;
 
   const log = getAttendanceLog();
@@ -138,12 +148,15 @@ export function markAttendance(name: string, rollNumber: string): boolean {
   const alreadyMarked = log.some(r => r.rollNumber === rollNumber && r.date === today);
   if (alreadyMarked) return false;
 
+  const windowStatus = getTimeWindowStatus();
+  const status: AttendanceStatus = windowStatus === 'late' ? 'Late' : 'Present';
+
   log.push({
     name,
     rollNumber,
     time: new Date().toLocaleTimeString(),
     date: today,
-    status: 'Present',
+    status,
   });
   localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(log));
   return true;
@@ -155,14 +168,12 @@ export function clearAttendanceLog(): void {
 
 export function createFaceMatcher(students: Student[]): faceapi.FaceMatcher | null {
   if (students.length === 0) return null;
-
   const labeled = students
     .filter(s => s.descriptors.length > 0)
     .map(s => new faceapi.LabeledFaceDescriptors(
       `${s.name}|${s.rollNumber}`,
       s.descriptors.map(d => new Float32Array(d))
     ));
-
   if (labeled.length === 0) return null;
   return new faceapi.FaceMatcher(labeled, 0.5);
 }
