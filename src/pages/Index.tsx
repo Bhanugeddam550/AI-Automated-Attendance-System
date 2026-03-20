@@ -82,8 +82,7 @@ const Index = () => {
         {activeTab === 'detect' && (
           <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
             <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <div className="h-2 w-2 animate-pulse rounded-full bg-success" />
+          <div className="flex items-center gap-2">
                 <span className="font-mono text-xs uppercase text-muted-foreground">Live Feed — Real-time Face Recognition</span>
               </div>
               <WebcamFeed onAttendanceMarked={handleAttendanceMarked} onFacesDetected={handleFacesDetected} />
