@@ -6,18 +6,23 @@ import {
   generateFullAttendance,
   getMasterStudentList,
   getTimeWindowStatus,
-  getAttendanceWindowText,
   getPresenceWindowText,
   getLateWindowText,
   type AttendanceStatus,
+  type MasterStudent,
 } from '@/lib/faceRecognition';
+import { exportAttendanceExcel, exportAttendancePDF, manuallyUpdateAttendance } from '@/lib/exportUtils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  Download, Trash2, Users, UserCheck, UserX, Percent, Clock, Timer,
-  Lock, Unlock, Search, Filter, AlertTriangle,
+  Download, Trash2, Users, UserCheck, UserX, Percent,
+  Clock, Timer, Lock, Unlock, Search, Filter, AlertTriangle,
+  FileSpreadsheet, FileText, Edit,
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
+import StudentProfileModal from './StudentProfileModal';
+import ManualCorrectionDialog from './ManualCorrectionDialog';
+import type { AttendanceRecord } from '@/lib/faceRecognition';
 
 interface AttendanceDashboardProps {
   refreshKey: number;
@@ -34,6 +39,9 @@ export default function AttendanceDashboard({ refreshKey }: AttendanceDashboardP
   const [now, setNow] = useState(new Date());
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<AttendanceStatus | 'All'>('All');
+  const [selectedStudent, setSelectedStudent] = useState<MasterStudent | null>(null);
+  const [correctionRecord, setCorrectionRecord] = useState<AttendanceRecord | null>(null);
+  const [, forceUpdate] = useState(0);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 5000);
@@ -56,7 +64,6 @@ export default function AttendanceDashboard({ refreshKey }: AttendanceDashboardP
   const attendancePercent = totalStrength > 0 ? Math.round(((presentCount + lateCount) / totalStrength) * 100) : 0;
 
   const windowStatus = getTimeWindowStatus();
-  const windowText = getAttendanceWindowText();
 
   const windowLabel = {
     before: 'WAITING FOR WINDOW',
@@ -79,7 +86,6 @@ export default function AttendanceDashboard({ refreshKey }: AttendanceDashboardP
     closed: 'text-destructive',
   }[windowStatus];
 
-  // Filtered attendance
   const filtered = fullAttendance.filter(r => {
     const matchesSearch = searchQuery === '' ||
       r.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -88,7 +94,6 @@ export default function AttendanceDashboard({ refreshKey }: AttendanceDashboardP
     return matchesSearch && matchesStatus;
   });
 
-  // Chart data
   const pieData = [
     { name: 'Present', value: presentCount, color: STATUS_COLORS.Present },
     { name: 'Late', value: lateCount, color: STATUS_COLORS.Late },
@@ -120,6 +125,11 @@ export default function AttendanceDashboard({ refreshKey }: AttendanceDashboardP
         {status}
       </span>
     );
+  };
+
+  const handleManualSave = (rollNumber: string, newStatus: AttendanceStatus) => {
+    manuallyUpdateAttendance(rollNumber, newStatus);
+    forceUpdate(n => n + 1);
   };
 
   return (
@@ -180,7 +190,6 @@ export default function AttendanceDashboard({ refreshKey }: AttendanceDashboardP
       {/* Charts */}
       {totalStrength > 0 && (
         <div className="grid gap-4 md:grid-cols-2">
-          {/* Pie Chart */}
           <div className="rounded-lg border border-border bg-card p-4">
             <h3 className="mb-2 font-heading text-sm uppercase tracking-wider text-primary">Attendance Distribution</h3>
             <ResponsiveContainer width="100%" height={200}>
@@ -192,7 +201,6 @@ export default function AttendanceDashboard({ refreshKey }: AttendanceDashboardP
               </PieChart>
             </ResponsiveContainer>
           </div>
-          {/* Bar Chart */}
           <div className="rounded-lg border border-border bg-card p-4">
             <h3 className="mb-2 font-heading text-sm uppercase tracking-wider text-primary">Status Breakdown</h3>
             <ResponsiveContainer width="100%" height={200}>
@@ -214,12 +222,7 @@ export default function AttendanceDashboard({ refreshKey }: AttendanceDashboardP
       <div className="flex flex-col gap-2 sm:flex-row">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search by name or roll number..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="pl-9 font-mono text-xs"
-          />
+          <Input placeholder="Search by name or roll number..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="pl-9 font-mono text-xs" />
         </div>
         <div className="flex gap-1">
           {(['All', 'Present', 'Late', 'Absent'] as const).map(s => (
@@ -227,9 +230,7 @@ export default function AttendanceDashboard({ refreshKey }: AttendanceDashboardP
               key={s}
               onClick={() => setStatusFilter(s)}
               className={`rounded-md px-3 py-2 font-mono text-[10px] font-bold transition-colors ${
-                statusFilter === s
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-secondary text-muted-foreground hover:text-foreground'
+                statusFilter === s ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground hover:text-foreground'
               }`}
             >
               {s === 'All' ? <Filter className="inline h-3 w-3 mr-1" /> : null}
@@ -241,14 +242,20 @@ export default function AttendanceDashboard({ refreshKey }: AttendanceDashboardP
 
       {/* Full Attendance Table */}
       <div className="rounded-lg border border-border bg-card p-4">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-heading text-sm uppercase tracking-wider text-primary">
             Attendance Report — {new Date().toISOString().split('T')[0]}
             <span className="ml-2 font-mono text-[10px] text-muted-foreground">({filtered.length} records)</span>
           </h3>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={exportAttendanceCSV}>
               <Download className="mr-1 h-3 w-3" /> CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={exportAttendanceExcel}>
+              <FileSpreadsheet className="mr-1 h-3 w-3" /> Excel
+            </Button>
+            <Button variant="outline" size="sm" onClick={exportAttendancePDF}>
+              <FileText className="mr-1 h-3 w-3" /> PDF
             </Button>
             <Button variant="outline" size="sm" onClick={() => { clearAttendanceLog(); window.location.reload(); }} disabled={log.length === 0} className="text-destructive hover:text-destructive">
               <Trash2 className="mr-1 h-3 w-3" /> Clear
@@ -266,17 +273,35 @@ export default function AttendanceDashboard({ refreshKey }: AttendanceDashboardP
                 <th className="px-3 py-2 text-left font-mono text-[10px] uppercase text-muted-foreground">Status</th>
                 <th className="px-3 py-2 text-left font-mono text-[10px] uppercase text-muted-foreground">Time</th>
                 <th className="px-3 py-2 text-left font-mono text-[10px] uppercase text-muted-foreground">Date</th>
+                <th className="px-3 py-2 text-left font-mono text-[10px] uppercase text-muted-foreground">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((record, idx) => (
-                <tr key={record.rollNumber} className="border-b border-border last:border-0">
+                <tr key={record.rollNumber} className="border-b border-border last:border-0 hover:bg-secondary/50 cursor-pointer">
                   <td className="px-3 py-1.5 font-mono text-[10px] text-muted-foreground">{idx + 1}</td>
                   <td className="px-3 py-1.5 font-mono text-xs text-muted-foreground">{record.rollNumber}</td>
-                  <td className="px-3 py-1.5 font-mono text-xs text-foreground">{record.name}</td>
+                  <td
+                    className="px-3 py-1.5 font-mono text-xs text-primary hover:underline"
+                    onClick={() => {
+                      const ms = masterList.find(s => s.rollNumber === record.rollNumber);
+                      if (ms) setSelectedStudent(ms);
+                    }}
+                  >
+                    {record.name}
+                  </td>
                   <td className="px-3 py-1.5">{statusBadge(record.status)}</td>
                   <td className="px-3 py-1.5 font-mono text-xs text-primary">{record.time}</td>
                   <td className="px-3 py-1.5 font-mono text-[10px] text-muted-foreground">{record.date}</td>
+                  <td className="px-3 py-1.5">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setCorrectionRecord(record); }}
+                      className="rounded p-1 text-muted-foreground hover:bg-primary/10 hover:text-primary transition-colors"
+                      title="Edit attendance"
+                    >
+                      <Edit className="h-3 w-3" />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -303,6 +328,19 @@ export default function AttendanceDashboard({ refreshKey }: AttendanceDashboardP
           </div>
         </div>
       )}
+
+      {/* Modals */}
+      <StudentProfileModal
+        student={selectedStudent}
+        open={!!selectedStudent}
+        onClose={() => setSelectedStudent(null)}
+      />
+      <ManualCorrectionDialog
+        record={correctionRecord}
+        open={!!correctionRecord}
+        onClose={() => setCorrectionRecord(null)}
+        onSave={handleManualSave}
+      />
     </div>
   );
 }
